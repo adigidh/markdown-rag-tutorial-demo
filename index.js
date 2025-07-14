@@ -1,53 +1,70 @@
-import { input } from '@inquirer/prompts';
-import fetch from 'node-fetch';
-import readline from 'readline';
-import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
-import { MemoryVectorStore } from 'langchain/vectorstores/memory';
-import { OllamaEmbeddings, ChatOllama } from '@langchain/ollama';
-import { Document } from '@langchain/core/documents';
-import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { input } from "@inquirer/prompts";
+import fetch from "node-fetch";
+import readline from "readline";
+import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
+import { MemoryVectorStore } from "langchain/vectorstores/memory";
+import { OllamaEmbeddings, ChatOllama } from "@langchain/ollama";
+import { Document } from "@langchain/core/documents";
+import { ChatPromptTemplate } from "@langchain/core/prompts";
 
 async function main() {
+  console.log("🚀 Starting Markdown Documentation Assistant...\n");
+
   // 1. Prompt for markdown file URL
-  const url = await input({ message: 'Enter the URL to your markdown file:' });
+  const url = await input({ message: "Enter the URL to your markdown file:" });
+  console.log(`\n📥 Received markdown URL: ${url}`);
 
   // 2. Download markdown file
-  console.log('Downloading markdown...');
+  console.time("Download markdown");
   const response = await fetch(url);
   if (!response.ok) {
-    console.error('Failed to download file:', response.statusText);
+    console.error("❌ Failed to download file:", response.statusText);
     process.exit(1);
   }
   const markdown = await response.text();
+  console.timeEnd("Download markdown");
 
   // 3. Chunk markdown
-  console.log('Chunking markdown...');
+  console.time("Chunk markdown");
   const splitter = new RecursiveCharacterTextSplitter({
     chunkSize: 1000,
     chunkOverlap: 200,
-    separators: ['\n\n', '\n', ' ', ''],
+    separators: ["\n\n", "\n", " ", ""],
   });
-  // Wrap in Document for LangChain compatibility
-  const docs = [new Document({ pageContent: markdown, metadata: { source: url } })];
+  const docs = [
+    new Document({ pageContent: markdown, metadata: { source: url } }),
+  ];
   const chunks = await splitter.splitDocuments(docs);
+  console.log(`🧩 Created ${chunks.length} chunks`);
+  console.timeEnd("Chunk markdown");
 
   // 4. Embed and index with MemoryVectorStore
-  console.log('Embedding and indexing...');
+  console.time("Embedding and indexing");
   const embeddings = new OllamaEmbeddings({
-    model: 'granite3.3:2b',
-    baseUrl: 'http://localhost:11434',
+    model: "granite3.3:2b",
+    baseUrl: "http://localhost:11434",
   });
-  const vectorStore = await MemoryVectorStore.fromDocuments(chunks, embeddings);
 
-  // 5. Set up LLM and prompt template
+  let vectorStore;
+  try {
+    vectorStore = await MemoryVectorStore.fromDocuments(chunks, embeddings);
+    console.log("✅ Vector store created successfully");
+  } catch (err) {
+    console.error("❌ Failed to create vector store:", err);
+    process.exit(1);
+  }
+  console.timeEnd("Embedding and indexing");
+
+  // 5. Set up LLM and prompt template (chatbot piece)
+  console.time("LLM and prompt setup");
   const llm = new ChatOllama({
-    model: 'granite3.3:2b',
+    model: "granite3.3:2b",
     temperature: 0.1,
-    baseUrl: 'http://localhost:11434',
+    baseUrl: "http://localhost:11434",
   });
   const promptTemplate = ChatPromptTemplate.fromMessages([
     [
-      'system',
+      "system",
       `You are an expert documentation assistant. Use the following context to answer questions about the documentation accurately and helpfully.
 Context: {context}
 Guidelines:
@@ -56,42 +73,55 @@ Guidelines:
 - Mention the source document when possible
 - If information is not in the context, clearly state that`,
     ],
-    ['human', '{question}'],
+    ["human", "{question}"],
   ]);
+  console.timeEnd("LLM and prompt setup");
 
   // 6. CLI chat loop
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: '> ',
+    prompt: "> ",
   });
 
-  console.log('\nReady! Ask your questions about the document. Type "exit" to quit.');
+  console.log(
+    '\n💬 Ready! Ask your questions about the document. Type "exit" to quit.'
+  );
   rl.prompt();
 
-  rl.on('line', async (line) => {
-    if (line.trim().toLowerCase() === 'exit') {
+  rl.on("line", async (line) => {
+    const question = line.trim();
+    if (question.toLowerCase() === "exit") {
+      console.log("👋 Exiting assistant. Goodbye!");
       rl.close();
       return;
     }
     try {
+      console.time("Retrieval");
       const retriever = vectorStore.asRetriever({ k: 5 });
-      const relevantDocs = await retriever.getRelevantDocuments(line.trim());
-      const context = relevantDocs.map(doc => doc.pageContent).join('\n\n');
-      // FIX: Use formatMessages to get chat messages for the LLM
+      const relevantDocs = await retriever.getRelevantDocuments(question);
+      console.timeLog(
+        "Retrieval",
+        `Found ${relevantDocs.length} relevant chunks`
+      );
+
+      const context = relevantDocs.map((doc) => doc.pageContent).join("\n\n");
+      console.timeEnd("Retrieval");
+
+      console.time("Answer generation");
       const promptMessages = await promptTemplate.formatMessages({
         context: context,
-        question: line.trim(),
+        question: question,
       });
       const response = await llm.invoke(promptMessages);
-      console.log(`Answer: ${response.content}\n`);
+      console.timeEnd("Answer generation");
+
+      console.log(`\n📝 Answer:\n${response.content}\n`);
     } catch (err) {
-      console.error('Error:', err.message);
+      console.error("❌ Error during processing:", err.message);
     }
     rl.prompt();
   });
 }
 
 main();
-
-
