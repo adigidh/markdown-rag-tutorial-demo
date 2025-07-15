@@ -17,7 +17,7 @@ This project demonstrates how to turn any markdown file into a conversational, A
 - [Ollama](https://ollama.com/) installed and running locally with Granite 3.3 model pulled on your machine:
 
 ```
-ollama pull granite3.3:8b
+ollama pull granite3.3:2b
 ```
 
 - Project dependencies installed:
